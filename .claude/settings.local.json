@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import sys; sys.path.insert\\(0,'src'\\); import pairtrade; from pairtrade import data, analysis, screening, plots; print\\('imports OK'\\)\")",
+      "Bash(python -m py_compile src/pairtrade/__init__.py src/pairtrade/data.py src/pairtrade/analysis.py src/pairtrade/screening.py src/pairtrade/plots.py scripts/_bootstrap.py scripts/fetch.py scripts/analyze.py scripts/screen.py)"
+    ]
+  }
+}
