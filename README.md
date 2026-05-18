@@ -1,35 +1,30 @@
-# Crypto Pair Trading Toolkit
+# Crypto Trend Comparison
 
-A small research toolkit for statistical-arbitrage style **pair trading** on
-crypto. Fetches daily history from CoinGecko, runs cointegration and z-score
-signal analysis on any two coins, and screens a basket of coins for the best
-candidate pairs.
+A small Python tool to fetch the daily price history of two cryptocurrencies
+from CoinGecko and compare their trends — both visually (a chart with both
+coins overlaid) and as a plain-English summary.
 
 ## Why Parquet?
 
-Pair trading is column-heavy work (rolling stats, cointegration, z-scores).
-Parquet's columnar layout matches that access pattern:
+The fetched price data is stored as Parquet rather than CSV/JSON:
 
 | Concern                 | CSV                       | Parquet                            |
 |-------------------------|---------------------------|------------------------------------|
 | File size               | 1×                        | ~0.1–0.2× (snappy compressed)      |
 | Read speed into pandas  | 1×                        | 10–50× faster                      |
 | Date columns            | Re-parsed every load      | Stored as native `datetime64`      |
-| Column subsetting       | Reads entire file         | Reads only requested columns       |
 | Schema                  | Lost (everything is text) | Preserved                          |
 
 ## Layout
 
 ```
-src/pairtrade/      reusable library
+src/pairtrade/
   data.py           CoinGecko fetcher + parquet I/O
-  analysis.py       β, spread, z-score, signals, cointegration
-  screening.py      rank all C(N, 2) pairs in a basket
-  plots.py          matplotlib charts
-scripts/            CLI entry points
-  fetch.py
-  analyze.py
-  screen.py
+  analysis.py       per-coin returns + correlation + plain-English verdict
+  plots.py          single comparison chart (rebased or dual-axis)
+scripts/
+  fetch.py          CLI: fetch one or more coins
+  analyze.py        CLI: compare two coins
 notebooks/
   exploration.ipynb interactive workflow
 data/               parquet outputs (gitignored)
@@ -37,7 +32,7 @@ data/               parquet outputs (gitignored)
 
 ## Setup
 
-```bash
+```powershell
 pip install -r requirements.txt
 ```
 
@@ -45,61 +40,56 @@ pip install -r requirements.txt
 
 ### 1. Fetch historical data
 
-```bash
-python scripts/fetch.py                                      # BTC + ETH, max history
-python scripts/fetch.py --coins bitcoin ethereum solana cardano ripple
-python scripts/fetch.py --days 730                           # last 2 years
+```powershell
+python scripts/fetch.py --coins bitcoin ethereum
+python scripts/fetch.py --coins bitcoin ethereum solana cardano   # multiple
+python scripts/fetch.py --days 730                                # last 2 years
 ```
 
 Writes `data/<coin>_history.parquet`.
 
-### 2. Analyze one pair
+### 2. Compare two coins
 
-```bash
+```powershell
 python scripts/analyze.py --a bitcoin --b ethereum
-python scripts/analyze.py --a bitcoin --b ethereum --window 90 --entry 2.5 --exit 0.3
+python scripts/analyze.py --a bitcoin --b ethereum --raw          # raw $ on dual axes
 ```
 
-Prints a summary (β, correlation, cointegration p-value, signal count), writes
-`analysis.parquet` with the full time series, and saves a 3-panel chart
-(`analysis.png`: prices, spread, z-score with entry bands).
+Prints a summary like:
 
-### 3. Screen a basket
+```
+Period: 2017-08-17 → 2026-05-18  (3197 daily observations)
+  bitcoin      $    4,261.94  →  $  103,221.40   (+2322.0%)
+  ethereum     $      301.55  →  $    4,082.10   (+1253.8%)
+  Correlation of daily returns: +0.785
 
-```bash
-python scripts/screen.py --coins bitcoin ethereum solana cardano ripple dogecoin litecoin
+Verdict: both trended up; moved tightly together (corr=0.78)
 ```
 
-Runs every pair, ranks by cointegration p-value, writes `screen.parquet` and a
-horizontal bar chart `screen.png`.
+And saves `comparison.png` — both coins on one chart, rebased to 100 at the
+start so trends are directly comparable on a single y-axis.
 
-### 4. Interactive exploration
+### 3. (Optional) Interactive notebook
 
-```bash
+```powershell
 jupyter notebook notebooks/exploration.ipynb
 ```
 
-Imports the same library modules and renders plots inline. Good for tweaking
-windows / thresholds and re-running single cells.
+## What "verdict" means
 
-## What the analysis produces
+The verdict line summarizes two things:
 
-For each day:
-- `log_<coin>` and `ret_<coin>` — log prices and log returns
-- `rolling_corr` — N-day correlation of returns
-- `spread = log(A) − β·log(B)` — mean-reverting if the pair is cointegrated
-- `zscore` — rolling z-score of the spread
-- `position` — `−1` (short spread), `+1` (long spread), `0` (flat), driven by a
-  state machine that enters at `|z| > entry_z` and exits at `|z| < exit_z`
+- **Trend direction**: did each coin end above or below where it started?
+  Either *"both trended up/down"* or *"diverged: A up, B down"*.
+- **Co-movement**: the Pearson correlation of daily log returns —
+  - `|r| ≥ 0.7` → *"moved tightly together"* (or *"opposite each other"*)
+  - `0.3 ≤ |r| < 0.7` → *"moderately linked"*
+  - `|r| < 0.3` → *"largely independent day-to-day"*
 
-## Reading the data later
-
-```python
-import pandas as pd
-btc = pd.read_parquet("data/bitcoin_history.parquet")
-analysis = pd.read_parquet("analysis.parquet")
-ranked = pd.read_parquet("screen.parquet")
-```
+Trend direction tells you the *long-run* path. Correlation tells you whether
+they *jiggle in sync day-to-day*. Two coins can both trend up while having
+weak day-to-day correlation, or have strong day-to-day correlation while one
+ends up and the other down (rare but possible over short windows).
 
 ## Coin ids
 
@@ -109,9 +99,6 @@ https://api.coingecko.com/api/v3/coins/list
 
 ## Notes
 
-- The fetcher uses CoinGecko's free tier, which is rate-limited to ~30 calls/min.
-  `fetch_many` sleeps 2.5s between coins to stay polite.
-- β is computed once over the full history. For a production system you'd want
-  a rolling β; the static version is fine for research.
-- This is a research toolkit, not a trading system — no order routing, no
-  transaction costs, no slippage model.
+- CoinGecko free tier is rate-limited (~30 calls/min); the fetcher sleeps 2.5s
+  between coins.
+- Daily data only.
