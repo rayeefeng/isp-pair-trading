@@ -1,3 +1,3 @@
-from . import data, analysis, plots
+from . import analysis, data, leadlag, plots
 
-__all__ = ["data", "analysis", "plots"]
+__all__ = ["analysis", "data", "leadlag", "plots"]
