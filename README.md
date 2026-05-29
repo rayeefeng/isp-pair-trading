@@ -18,18 +18,23 @@ The fetched price data is stored as Parquet rather than CSV/JSON:
 ## Layout
 
 ```
-src/pairtrade/
-  data.py           Yahoo Finance fetcher + parquet I/O
-  analysis.py       per-coin returns + correlation + plain-English verdict
-  leadlag.py        daily lead-lag analysis + parameter sweep + event detection
-  plots.py          comparison chart, cross-correlation, sweep heatmap, event scatter
+src/pairtrade/                  v1 library
+  data.py                       Yahoo Finance fetcher + parquet I/O
+  analysis.py                   per-coin returns + correlation + verdict
+  leadlag.py                    parameter sweep + event detection (no β)
+  plots.py                      comparison / CCF / sweep / event-scatter charts
+src/isppairtradingv2/           v2 library  (adds rolling hedge ratio)
+  hedge_ratio.py                look-ahead-safe rolling cumulative-response β
+  leadlag.py                    events augmented with predicted move + capture ratio
+  plots.py                      rolling β, predicted-vs-actual, capture histogram
 scripts/
-  fetch.py          CLI: fetch one or more tickers
-  analyze.py        CLI: long-run trend comparison of two tickers
-  leadlag.py        CLI: lead-lag / opportunity detection
+  fetch.py                      fetch one or more tickers
+  analyze.py                    long-run trend comparison
+  leadlag.py                    v1 lead-lag / opportunity detection
+  leadlagv2.py                  v2 (β-aware) lead-lag analysis
 notebooks/
-  exploration.ipynb interactive workflow
-data/               parquet outputs (gitignored)
+  exploration.ipynb             interactive workflow
+data/                           parquet outputs (gitignored)
 ```
 
 ## Setup
@@ -127,7 +132,55 @@ Also saves three charts:
 
 And the events table as `leadlag_events.parquet` for further inspection.
 
-### 4. (Optional) Interactive notebook
+### 4. v2 — same analysis with a rolling hedge ratio
+
+`leadlagv2.py` runs the same pipeline (distribution → cross-correlation →
+sweep → recommendation) and then fits a **rolling hedge ratio** β at the
+recommended lag. For each event you then see how much of the move the
+follower *should* have made vs how much it actually made.
+
+```powershell
+python scripts/leadlagv2.py --a BTC-USD --b ETH-USD
+python scripts/leadlagv2.py --a BTC-USD --b ETH-USD --beta-window 60
+```
+
+The β used is the **cumulative-response** form, fit only on past data:
+
+```
+β(t) = cov( ret_leader(s), Σ ret_follower(s+1..s+K) ) / var( ret_leader(s) )
+       over s in the trailing 90-day window
+```
+
+Interpretation: "given a leader move of `x` today, the follower's
+cumulative return over the next `K` days is, on average, `β·x`." A
+β of 0.5 means the follower captures half the move; β of 1.2 means it
+over-shoots. β is recomputed every day from a rolling window, so you see
+how the relationship has evolved.
+
+For each event we then report:
+
+- **predicted follower move**:  `β(event_date) × leader_return`
+- **actual follower move**:    cumulative log return over the lookahead window
+- **capture ratio**:           `actual / predicted`
+  - `≈ 1.0` → follower moved exactly as β predicted
+  - `> 1.0` → over-shoot (potentially still tradeable, but momentum is overshooting)
+  - `0 < r < 1` → under-shoot (the typical "lag still has room to run" case)
+  - `< 0`     → moved opposite of prediction (β-broken event)
+
+Three extra charts get saved:
+
+- `rolling_beta.png` — β over time (when did the relationship strengthen / break?)
+- `predicted_vs_actual.png` — scatter; diagonal = perfect β prediction
+- `capture_ratio_hist.png` — distribution of capture ratios
+
+And the augmented events table as `leadlagv2_events.parquet`, the β series
+as `rolling_beta.parquet`.
+
+**v1 vs v2 in one sentence:** v1 tells you *whether the follower moved
+same direction*; v2 tells you *whether the size of the follower's move
+matched what its historical relationship with the leader predicts*.
+
+### 5. (Optional) Interactive notebook
 
 ```powershell
 jupyter notebook notebooks/exploration.ipynb
