@@ -27,11 +27,17 @@ src/isppairtradingv2/           v2 library  (adds rolling hedge ratio)
   hedge_ratio.py                look-ahead-safe rolling cumulative-response β
   leadlag.py                    events augmented with predicted move + capture ratio
   plots.py                      rolling β, predicted-vs-actual, capture histogram
+src/isppairtradingv3/           v3 library  (backtest + walk-forward)
+  backtest.py                   event-driven P&L sim with transaction costs
+  metrics.py                    Sharpe, Sortino, drawdown, win rate, profit factor
+  walkforward.py                pick params in-sample, test out-of-sample, roll
+  plots.py                      equity curve, drawdown, walk-forward comparison
 scripts/
   fetch.py                      fetch one or more tickers
   analyze.py                    long-run trend comparison
   leadlag.py                    v1 lead-lag / opportunity detection
   leadlagv2.py                  v2 (β-aware) lead-lag analysis
+  backtest.py                   v3 backtest + walk-forward validation
 notebooks/
   exploration.ipynb             interactive workflow
 data/                           parquet outputs (gitignored)
@@ -180,7 +186,47 @@ as `rolling_beta.parquet`.
 same direction*; v2 tells you *whether the size of the follower's move
 matched what its historical relationship with the leader predicts*.
 
-### 5. (Optional) Interactive notebook
+### 5. v3 — does it actually make money? (backtest + walk-forward)
+
+v1/v2 tell you the signal *exists*. v3 asks the only question that matters
+for trading: **does it make money after costs, out of sample?**
+
+```powershell
+python scripts/backtest.py --a BTC-USD --b ETH-USD
+python scripts/backtest.py --a BTC-USD --b ETH-USD --cost 0.0026 --entry-delay 0
+```
+
+It runs two backtests of the lead-lag follower trade (enter the follower in
+the leader's direction after a big leader move, hold for the recommended
+lookahead, exit):
+
+1. **In-sample** — params picked on the full history, tested on the full
+   history. Optimistic; this is the number that fools people.
+2. **Walk-forward (out-of-sample)** — for each test window, params are picked
+   using *only* prior data, then tested on the unseen window. This is the
+   honest estimate of live performance.
+
+Both report Sharpe, Sortino, max drawdown, CAGR, win rate, and profit
+factor, with a buy-&-hold benchmark for context. A closing "reality check"
+compares in-sample vs out-of-sample Sharpe and flags overfitting.
+
+Key flags:
+
+- `--cost` — transaction cost **per side** (fees + slippage). Default `0.001`
+  (0.10%); round trip is `2×`. Try `0.0005` and `0.0026` to bracket it.
+- `--entry-delay` — `1` (default, conservative: act the day after the signal)
+  or `0` (aggressive: trade at the signal-bar close).
+- `--train-frac` / `--windows` — size of the initial training block and the
+  number of walk-forward test windows.
+
+Saves `equity_insample.png`, `drawdown_insample.png`, `equity_oos.png`,
+`walkforward.png`, and `backtest_trades.parquet`.
+
+> ⚠️ Even a good walk-forward result is not a guarantee. Costs, slippage in
+> fast markets, and regime changes can still sink a live strategy. Paper-trade
+> before risking real money.
+
+### 6. (Optional) Interactive notebook
 
 ```powershell
 jupyter notebook notebooks/exploration.ipynb
